@@ -21,9 +21,10 @@ export default class Stylesheet {
    * @param str {string}
    * This funcion generates a hash of the css classname
    */
-  private generateClassNameHash(str: string) {
+  private generateClassNameHash(str: string, forceUniqueness?: boolean) {
     let value = 5381;
-    let len = str.length + this.styles.length;
+    let len =
+      str.length + (!!forceUniqueness === true ? 0 : this.styles.length);
     while (len--) value = (value * 33) ^ str.charCodeAt(len);
     return (value >>> 0).toString(36);
   }
@@ -75,6 +76,40 @@ export default class Stylesheet {
     return stringHash;
   }
 
+  private generateAtomicCss(style: any): any {
+    let cssProperties = Object.keys(style);
+    let atomicClassnameArray: string[] = [];
+    let atomicClassNameMappings: { [key: string]: string } = {};
+
+    for (let key of cssProperties) {
+      let property = this.getValidCssProperty(key);
+      let value = style[key];
+      let suffix =
+        value &&
+        typeof value === "number" &&
+        property !== "font-size" &&
+        !UNITLESS_CSS_KEYS[value]
+          ? "px"
+          : "";
+      value =
+        property === "font-size" && value && typeof value === "number"
+          ? this.convertFontSizeToRem(value)
+          : value;
+
+      let cssValue = `${property}:${value}${suffix};`;
+      let atomicClassnameHash = `s${this.generateClassNameHash(
+        cssValue,
+        true
+      )}`;
+      //@todo here we want to not push the classname hash
+      //if it exist in the array. Its a means of de-duplication
+      atomicClassnameArray.push(atomicClassnameHash);
+      atomicClassNameMappings[atomicClassnameHash] = key;
+      this.setStyle(atomicClassnameHash, cssValue);
+    }
+    return { atomicClassnameArray, atomicClassNameMappings };
+  }
+
   /**
    * @return string
    * @param classname {string}
@@ -86,25 +121,36 @@ export default class Stylesheet {
   }
 
   /**
-   * This function inject the style to the head of the document
-   */
-  private injectStyle() {
-    let style: any = document.createElement("style");
-    if (!!style.sheet === true) {
-      let index = style.sheet.cssRules.length;
-      style.sheet.insertRule(this.styles, index);
-    } else {
-      style.textContent = this.styles;
-    }
-    document.head.appendChild(style);
-    console.log(this.styles);
-  }
-
-  /**
    * This function acts as a getter for the styles property
    */
   public getStyle(): string {
     return this.styles;
+  }
+
+  private getAtomicClassNames(
+    dictionary: { [key: string]: string[] },
+    atomicMappings: any
+  ) {
+    return function() {
+      let atomicClassNames = {} as any;
+      for (let i = 0; i < arguments.length; i++) {
+        let value = arguments[i];
+        if (
+          value &&
+          typeof value === "string" &&
+          !!dictionary[value] === true
+        ) {
+          for (let className of dictionary[value]) {
+            atomicClassNames[atomicMappings[className]] = className;
+          }
+        }
+      }
+      //@todo
+      //Object.values not available as a property of Object so we use the long approach
+      return Object.keys(atomicClassNames)
+        .map(k => atomicClassNames[k])
+        .join(" ");
+    };
   }
 
   /**
@@ -124,8 +170,23 @@ export default class Stylesheet {
       classNames[key] = classnameHash;
       this.setStyle(classnameHash, cssValue);
     }
-
-    this.injectStyle();
     return classNames;
+  }
+
+  public createAtomicCss(styles: any) {
+    let keys: string[] = Object.keys(styles);
+    let reformed = {} as { [key: string]: string[] };
+    let mappings = {} as any;
+
+    for (let key of keys) {
+      let {
+        atomicClassnameArray,
+        atomicClassNameMappings
+      } = this.generateAtomicCss(styles[key]);
+      reformed[key] = atomicClassnameArray;
+      mappings = { ...mappings, ...atomicClassNameMappings };
+    }
+
+    return this.getAtomicClassNames(reformed, mappings);
   }
 }

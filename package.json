@@ -1,7 +1,7 @@
 {
   "name": "stylesheet",
   "version": "1.0.0",
-  "description": "A non-production based css-in-js library",
+  "description": "A development based css-in-js library",
   "keywords": [],
   "main": "src/index.tsx",
   "dependencies": {
