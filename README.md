@@ -1,2 +1,0 @@
-# StyleSheet
-Created with CodeSandbox
