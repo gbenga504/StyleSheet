@@ -4,7 +4,15 @@ interface IProps {
   rootFontSize?: number;
 }
 
-export default class Stylesheet {
+/**
+ * In a production based environment we will either
+ * want each Stylesheet.create function to maintain its own instance
+ * of the styles object and if we choose to perform some
+ * static analysis to further optimise css, then we can go further with this approach
+ *
+ * This is also for development purposes. Its not intended to be production ready
+ */
+export class Stylesheet {
   private styles: string = ``;
   private rootFontSize: number = 16;
 
@@ -20,6 +28,9 @@ export default class Stylesheet {
    * @returns string
    * @param str {string}
    * This funcion generates a hash of the css classname
+   * When forceUniqueness is true, then the same hash is generated for
+   * 2 or more str with the same value
+   * This is useful in case you want to eliminate duplicates
    */
   private generateClassNameHash(str: string, forceUniqueness?: boolean) {
     let value = 5381;
@@ -49,65 +60,74 @@ export default class Stylesheet {
   }
 
   /**
-   * @return string
-   * @param param
-   * This function converts a Js Object to a valid css string
+   * @return {Object}
+   * @param style
+   * @param key
+   * This function takes a js defined css key and value and returns the
+   * equivalent css meta data. The meta data consist of a valid css property,
+   * value , suffix and css value
    */
-  private convertToCss(param: any): string {
-    let keys = Object.keys(param);
-    let stringHash = "";
+  private getCssMetaData(
+    key: string,
+    value: string
+  ): { property: string; value: string; suffix: string; cssValue: string } {
+    let property = this.getValidCssProperty(key);
+    let suffix =
+      value &&
+      typeof value === "number" &&
+      property !== "font-size" &&
+      !UNITLESS_CSS_KEYS[value]
+        ? "px"
+        : "";
+    value =
+      property === "font-size" && value && typeof value === "number"
+        ? this.convertFontSizeToRem(value)
+        : value;
 
-    for (let key of keys) {
-      let property = this.getValidCssProperty(key);
-      let value = param[key];
-      let suffix =
-        value &&
-        typeof value === "number" &&
-        property !== "font-size" &&
-        !UNITLESS_CSS_KEYS[value]
-          ? "px"
-          : "";
-      value =
-        property === "font-size" && value && typeof value === "number"
-          ? this.convertFontSizeToRem(value)
-          : value;
-      stringHash += `${property}:${value}${suffix};`;
-    }
-    return stringHash;
+    return {
+      property,
+      value,
+      suffix,
+      cssValue: `${property}:${value}${suffix};`
+    };
   }
 
-  private generateAtomicCss(style: any): any {
+  /**
+   * @return string
+   * @param param
+   * This function converts a Js class definition to a valid css string
+   */
+  private convertClassDefToValidCss(style: any): string {
     let cssProperties = Object.keys(style);
-    let atomicClassnameArray: string[] = [];
+    let result = "";
+
+    for (let key of cssProperties) {
+      let { cssValue } = this.getCssMetaData(key, style[key]);
+      result += cssValue;
+    }
+    return result;
+  }
+
+  /**
+   *
+   * @param style
+   * This function generates atomic css and returns a
+   * mapping representing { atomicClassname : cssProperty }
+   */
+  private generateAtomicCss(style: any): { [key: string]: string } {
+    let cssProperties = Object.keys(style);
     let atomicClassNameMappings: { [key: string]: string } = {};
 
     for (let key of cssProperties) {
-      let property = this.getValidCssProperty(key);
-      let value = style[key];
-      let suffix =
-        value &&
-        typeof value === "number" &&
-        property !== "font-size" &&
-        !UNITLESS_CSS_KEYS[value]
-          ? "px"
-          : "";
-      value =
-        property === "font-size" && value && typeof value === "number"
-          ? this.convertFontSizeToRem(value)
-          : value;
-
-      let cssValue = `${property}:${value}${suffix};`;
+      let { cssValue } = this.getCssMetaData(key, style[key]);
       let atomicClassnameHash = `s${this.generateClassNameHash(
         cssValue,
         true
       )}`;
-      //@todo here we want to not push the classname hash
-      //if it exist in the array. Its a means of de-duplication
-      atomicClassnameArray.push(atomicClassnameHash);
       atomicClassNameMappings[atomicClassnameHash] = key;
       this.setStyle(atomicClassnameHash, cssValue);
     }
-    return { atomicClassnameArray, atomicClassNameMappings };
+    return atomicClassNameMappings;
   }
 
   /**
@@ -127,26 +147,39 @@ export default class Stylesheet {
     return this.styles;
   }
 
+  /**
+   * @return {String}
+   * @param atomicClassNamesByClassDef {Object}
+   * @param atomicClassNamesDictionary {Object}
+   * This function returns a function that returns
+   * the atomic classnames generated based on the js classnames arguments
+   * Here we also respect the order in which classnames are applied
+   */
   private getAtomicClassNames(
-    dictionary: { [key: string]: string[] },
-    atomicMappings: any
-  ) {
-    return function() {
+    atomicClassNamesByClassDef: { [key: string]: string[] },
+    atomicClassNamesDictionary: { [key: string]: string }
+  ): Function {
+    return function(): string {
       let atomicClassNames = {} as any;
       for (let i = 0; i < arguments.length; i++) {
-        let value = arguments[i];
+        let className = arguments[i];
+        //check if the className passed has a list of atomic classnames
         if (
-          value &&
-          typeof value === "string" &&
-          !!dictionary[value] === true
+          className &&
+          typeof className === "string" &&
+          !!atomicClassNamesByClassDef[className] === true
         ) {
-          for (let className of dictionary[value]) {
-            atomicClassNames[atomicMappings[className]] = className;
+          //Map css properties to their atomicClassName
+          for (let atomicClassName of atomicClassNamesByClassDef[className]) {
+            atomicClassNames[
+              atomicClassNamesDictionary[atomicClassName]
+            ] = atomicClassName;
           }
         }
       }
       //@todo
       //Object.values not available as a property of Object so we use the long approach
+      //return a string of valid atomic classnames
       return Object.keys(atomicClassNames)
         .map(k => atomicClassNames[k])
         .join(" ");
@@ -156,37 +189,54 @@ export default class Stylesheet {
   /**
    * @return {Object}
    * @param styles
-   * This function is the entry point.
+   * This function is an entry point.
    * It returns an object. The key which corresponds to the user defined classname
-   * and value which corresponds to the classname hash generated and used for our css
+   * and value which corresponds to the classname hash
+   * Use this if you do not want to harness the power of atomic css
    */
   public create(styles: any) {
-    let keys: string[] = Object.keys(styles);
-    let classNames: { [key: string]: string } = {};
+    let classNames: string[] = Object.keys(styles);
+    let result: { [key: string]: string } = {};
 
-    for (let key of keys) {
-      let cssValue: string = this.convertToCss(styles[key]);
+    for (let className of classNames) {
+      let cssValue: string = this.convertClassDefToValidCss(styles[className]);
       let classnameHash = `s${this.generateClassNameHash(cssValue)}`;
-      classNames[key] = classnameHash;
+      result[className] = classnameHash;
       this.setStyle(classnameHash, cssValue);
     }
-    return classNames;
+    return result;
   }
 
+  /**
+   * @return {Function}
+   * @param styles
+   * This function is an entry point
+   * With atomic css, we can take advantage of static analysis to precompile css
+   * and generate a relatively small output
+   * Also the order of css in the CSSDOM do not matter, this function makes sure
+   * that we respect the order of classname as defined in our JSX
+   * i.e className={styles("greenText", "redText")} , we are always certain that
+   * red color is applied no matter where it sits in our CSSDOM
+   */
   public createAtomicCss(styles: any) {
-    let keys: string[] = Object.keys(styles);
-    let reformed = {} as { [key: string]: string[] };
-    let mappings = {} as any;
+    let classNames: string[] = Object.keys(styles);
+    let atomicClassNamesByClassDef = {} as { [key: string]: string[] }; //each classname is mapped to a list of generated atomic classnames based on its class def
+    let atomicClassNamesDictionary = {} as { [key: string]: string }; //each atomic classname is mapped to its corresponding css property
 
-    for (let key of keys) {
-      let {
-        atomicClassnameArray,
+    for (let className of classNames) {
+      let atomicClassNameMappings = this.generateAtomicCss(styles[className]);
+      atomicClassNamesByClassDef[className] = Object.keys(
         atomicClassNameMappings
-      } = this.generateAtomicCss(styles[key]);
-      reformed[key] = atomicClassnameArray;
-      mappings = { ...mappings, ...atomicClassNameMappings };
+      );
+      atomicClassNamesDictionary = {
+        ...atomicClassNamesDictionary,
+        ...atomicClassNameMappings
+      };
     }
 
-    return this.getAtomicClassNames(reformed, mappings);
+    return this.getAtomicClassNames(
+      atomicClassNamesByClassDef,
+      atomicClassNamesDictionary
+    );
   }
 }

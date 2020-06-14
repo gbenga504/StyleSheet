@@ -1,38 +1,28 @@
 import * as React from "react";
+import { Component, stylesheet as nonAtomicStylesheet } from "./Component";
+import {
+  AtomicCssComponent,
+  stylesheet as atomicStylesheet
+} from "./AtomicCssComponent";
 import "./styles.css";
-import Stylesheet from "./utils/Stylesheet";
-
-const stylesheet = new Stylesheet();
 
 export default function App() {
-  const [isError, setIsError] = React.useState(false);
+  const [showAtomicComponent, setShowAtomicComponent] = React.useState(false);
+
+  React.useEffect(() => {
+    let style: any = document.createElement("style");
+    style.textContent = showAtomicComponent
+      ? atomicStylesheet.getStyle()
+      : nonAtomicStylesheet.getStyle();
+    document.head.appendChild(style);
+  }, [showAtomicComponent]);
 
   return (
-    <div>
-      <span className={styles("greenText", isError === true && "redText")}>
-        A development based Css-In-Js Library
-      </span>
-      <button onClick={() => setIsError(prevState => !prevState)}>
-        Switch mode
+    <>
+      {showAtomicComponent ? <AtomicCssComponent /> : <Component />}
+      <button onClick={() => setShowAtomicComponent(prevState => !prevState)}>
+        Switch
       </button>
-    </div>
+    </>
   );
 }
-
-const styles = stylesheet.createAtomicCss({
-  redText: {
-    color: "red"
-  },
-  greenText: {
-    color: "green",
-    marginLeft: 100
-  }
-}) as any;
-
-function injectStyle() {
-  let style: any = document.createElement("style");
-  style.textContent = stylesheet.getStyle();
-  document.head.appendChild(style);
-  console.log(stylesheet.getStyle());
-}
-injectStyle();
